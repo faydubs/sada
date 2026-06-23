@@ -7,25 +7,6 @@ import { useAudioRecorder } from "../hooks/useAudioRecorder.js";
 import { formatDuration } from "../lib/format.js";
 import { Brand, Logo, Icon, Spinner } from "../components/ui.jsx";
 
-function Footer() {
-  return (
-    <footer className="glass glass-2 auth-footer">
-      <div className="af-tag">
-        <span className="pulse" style={{ width: 7, height: 7 }} />
-        صوت المزاد .. بيانات تدوم — منصة ذكية بالذكاء الاصطناعي
-      </div>
-      <div className="af-stats">
-        {[["٤٨٠+", "مزاد موثّق"], ["٩٧٪", "دقّة التفريغ"], ["١٢", "نوع تمر"]].map(([n, l]) => (
-          <div className="af-stat" key={l}>
-            <b className="num">{n}</b>
-            <span>{l}</span>
-          </div>
-        ))}
-      </div>
-    </footer>
-  );
-}
-
 export default function Login({ initialMode = "login" }) {
   const { login, register } = useAuth();
   const navigate = useNavigate();
@@ -188,7 +169,6 @@ export default function Login({ initialMode = "login" }) {
   // ── المرحلة 2: اختيار الدور ───────────────────────────────────────────────
   if (stage === "role") {
     return (
-      <>
         <div className="role-wrap">
           <div className="role-inner">
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}>
@@ -215,15 +195,12 @@ export default function Login({ initialMode = "login" }) {
             </div>
           </div>
         </div>
-        <Footer />
-      </>
     );
   }
 
   // ── الخطوة الثانية للدلّال: تسجيل البصمة الصوتية (بعد إنشاء الحساب) ─────────
   if (stage === "voiceprint") {
     return (
-      <>
         <div className="auth-wrap">
           <div className="auth-stack" style={{ maxWidth: 460 }}>
             <div className="glass glass-2 auth-card">
@@ -234,9 +211,23 @@ export default function Login({ initialMode = "login" }) {
               <h1 className="display" style={{ fontSize: 34, fontFamily: "var(--font-ar)", fontWeight: 600, marginBottom: 6 }}>
                 سجّل بصمتك الصوتية
               </h1>
-              <p style={{ color: "var(--ink-soft)", fontSize: 15, margin: "0 0 22px" }}>
-                نسجّل صوتك مرة واحدة لنتعرّف عليك تلقائياً في مزاداتك القادمة. سجّل ١٠–٣٠ ثانية أو ارفع ملفاً صوتياً.
+              <p style={{ color: "var(--ink-soft)", fontSize: 15, margin: "0 0 16px" }}>
+                نسجّل صوتك مرة واحدة لنتعرّف عليك تلقائياً في مزاداتك القادمة. اضغط الميكروفون واقرأ الجملة التالية بصوتٍ واضح (١٠–٣٠ ثانية)، أو ارفع ملفاً صوتياً.
               </p>
+
+              {/* جملة موحّدة يقرأها الدلّال أثناء التسجيل — تحسّن جودة البصمة */}
+              <div
+                className="glass-inset"
+                style={{ padding: "16px 18px", marginBottom: 18, textAlign: "center", borderRight: "3px solid var(--green-700)" }}
+              >
+                <div style={{ fontSize: 12, color: "var(--ink-faint)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6, justifyContent: "center" }}>
+                  <Icon name="mic" size={14} style={{ color: "var(--green-700)" }} /> اقرأ هذه الجملة بصوتك
+                </div>
+                <p style={{ fontSize: 17, lineHeight: 2, fontWeight: 600, color: "var(--brown-800)", margin: 0, fontFamily: "var(--font-ar)" }}>
+                  «بسم الله، أفتح حراج الليلة على تمر السكري الفاخر من مزارع القصيم،
+                  البداية من مئة ريال، من يزيد؟ … بيع مبارك على أبو فهد.»
+                </p>
+              </div>
 
               {error && <div className="banner banner-error" style={{ marginBottom: 16 }}>{error}</div>}
 
@@ -284,8 +275,6 @@ export default function Login({ initialMode = "login" }) {
             </div>
           </div>
         </div>
-        <Footer />
-      </>
     );
   }
 
@@ -295,7 +284,6 @@ export default function Login({ initialMode = "login" }) {
     mode === "login" ? "أهلاً بعودتك" : isDallal ? "انضمّ كدلّال" : "حساب مسؤول جديد";
 
   return (
-    <>
       <div className="auth-wrap">
         <div className="auth-stack">
           <div className="glass glass-2 auth-card">
@@ -401,7 +389,5 @@ export default function Login({ initialMode = "login" }) {
           </div>
         </div>
       </div>
-      <Footer />
-    </>
   );
 }

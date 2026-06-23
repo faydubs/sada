@@ -4,7 +4,7 @@ import { apiError } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useAudioRecorder } from "../hooks/useAudioRecorder.js";
 import { useOnline } from "../hooks/useOnline.js";
-import { addPending, getAllPending, removePending, countPending } from "../lib/offlineQueue.js";
+import { addPending, getAllPending, removePending, countPending, seedDemoPending } from "../lib/offlineQueue.js";
 import { CONFIDENCE, formatCurrency, formatDuration, formatNumber } from "../lib/format.js";
 import { Brand, Icon, Spinner } from "../components/ui.jsx";
 
@@ -13,6 +13,47 @@ const ACTION_LABEL = {
   إغلاق: { txt: "إغلاق", cls: "chip-green" },
   جارٍ: { txt: "جارٍ", cls: "chip-muted" },
 };
+
+// ── عرض "مسار التحليل" بصورة منطقية: عنوان عربي لكل خطوة + تفصيل ذي معنى ──────
+const TRACE_TITLE = {
+  transcribe: "تحويل الصوت إلى نص",
+  transcribe_audio: "تحويل الصوت إلى نص",
+  extract: "استخراج بيانات المزاد",
+  extract_auction_data: "استخراج بيانات المزاد",
+  classify: "تصنيف حالة المزاد",
+  classify_auction_state: "تصنيف حالة المزاد",
+  gemini: "تحليل ذكي (Gemini)",
+  parse_with_gemini: "تحليل ذكي (Gemini)",
+  decision_route: "اختيار أدقّ مصدر",
+  decision_confidence_gate: "تعزيز الثقة بالبصمة",
+  voiceprint: "التحقق من البصمة الصوتية",
+  verify_voiceprint: "التحقق من البصمة الصوتية",
+};
+const STATUS_AR = { ok: "تم", error: "تعذّر", skipped: "تُخطّي", low_confidence: "ثقة منخفضة", unavailable: "غير متاح" };
+const ROUTE_AR = {
+  extractor_only: "المستخرِج المحلي",
+  gemini: "Gemini",
+  gemini_low_fallback_extractor: "المستخرِج المحلي",
+  gemini_low_kept: "Gemini",
+  voiceprint_boost: "تعزيز بالبصمة",
+  offline_demo: "وضع الأوفلاين",
+  none_empty_transcript: "لا يوجد كلام",
+};
+
+function traceTitle(t) {
+  return TRACE_TITLE[t.skill] || TRACE_TITLE[t.step] || t.skill || t.step || "خطوة";
+}
+function traceDetail(t) {
+  if (t.action) return t.action;                                       // إغلاق / افتتاح / جارٍ
+  if (t.is_match != null) return t.is_match ? `مطابقة (${t.best_score ?? "—"})` : "غير مطابقة";
+  if (t.confidence) return CONFIDENCE[t.confidence]?.label || t.confidence;
+  if (t.route_chosen) return ROUTE_AR[t.route_chosen] || "تم";
+  if (t.chars != null) return `${formatNumber(t.chars)} حرف`;
+  return STATUS_AR[t.status] || t.status || "—";
+}
+function traceOk(t) {
+  return (t.status ? t.status === "ok" : true) && t.is_match !== false;
+}
 
 /*
  * تبويب "تسجيل مزاد" للدلّال (التطبيق الجوال).
@@ -39,9 +80,13 @@ export default function LiveSession() {
     try { setPending(await countPending()); } catch { /* ignore */ }
   }, []);
 
-  // عند الإقلاع: حُلّ الجلسة النشطة (إن وُجدت ونحن متصلون) + اعرف عدد المعلّق
+  // عند الإقلاع: ازرع تسجيلاً معلّقاً تجريبياً (مرة واحدة) لعرض تجربة الأوفلاين،
+  // ثم حُلّ الجلسة النشطة (إن وُجدت ونحن متصلون) + اعرف عدد المعلّق
   useEffect(() => {
-    refreshPending();
+    (async () => {
+      try { await seedDemoPending(false); } catch { /* ignore */ }
+      refreshPending();
+    })();
     if (!online) return;
     (async () => {
       try {
@@ -143,6 +188,13 @@ export default function LiveSession() {
     for (const item of items) {
       setFlushProgress({ done, total: items.length });
       try {
+        // تسجيل تجريبي: نعرض نتيجته الجاهزة دون اتصال بالخادم (محاكاة الأوفلاين).
+        if (item.demo) {
+          lastResult = item.demoResult;
+          await removePending(item.id);
+          done += 1;
+          continue;
+        }
         const id = item.sessionId || (await ensureSession());
         const file = new File([item.file], `queued.${(item.file.type || "audio/webm").includes("mp4") ? "mp4" : "webm"}`, { type: item.file.type || "audio/webm" });
         const { data } = await auctionsApi.processAudio(id, file);
@@ -245,6 +297,18 @@ export default function LiveSession() {
             </div>
             {recError && <div style={{ fontSize: 12, color: "#7e2a1c", marginTop: 6 }}>{recError}</div>}
           </div>
+
+          {/* تجربة تسجيل معلّق (أوفلاين) كبروتوتايب — يضيف عنصراً للطابور لعرضه */}
+          {phase === "idle" && !recording && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ padding: "8px 14px", fontSize: 12.5 }}
+              onClick={async () => { await seedDemoPending(true); await refreshPending(); setNotice("أُضيف تسجيل معلّق تجريبي — اضغط «تحليل» في الأعلى لعرض نتيجته."); }}
+            >
+              <Icon name="box" size={15} /> تجربة تسجيل معلّق (أوفلاين)
+            </button>
+          )}
         </div>
       )}
 
@@ -287,13 +351,19 @@ export default function LiveSession() {
           {Array.isArray(result?.trace) && result.trace.length > 0 && (
             <div className="glass glass-2 panel">
               <div className="panel-head"><h3 style={{ fontSize: 14, color: "var(--brown-800)" }}>مسار التحليل</h3></div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {result.trace.map((t, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--ink-soft)" }}>
-                    <span>{t.skill || t.step}</span>
-                    <span className="chip chip-muted" style={{ padding: "2px 8px", fontSize: 11 }}>{t.status || t.route_chosen || "—"}</span>
-                  </div>
-                ))}
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {result.trace.map((t, i) => {
+                  const ok = traceOk(t);
+                  return (
+                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 13 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--brown-800)" }}>
+                        <span style={{ width: 7, height: 7, borderRadius: "50%", background: ok ? "var(--green-700)" : "var(--ink-faint)", flexShrink: 0 }} />
+                        {traceTitle(t)}
+                      </span>
+                      <span className={"chip " + (ok ? "chip-green" : "chip-muted")} style={{ padding: "2px 10px", fontSize: 11.5 }}>{traceDetail(t)}</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

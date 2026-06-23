@@ -36,3 +36,74 @@ export async function countPending() {
   const db = await getDB();
   return db.count(STORE);
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+ * تسجيل معلّق افتراضي (بروتوتايب) — يحاكي ما يحدث عند التسجيل أثناء انقطاع
+ * الإنترنت: يُحفظ محلياً ثم يظهر في بانر "جلسة معلّقة"، وعند الضغط على "تحليل"
+ * تُعرض نتيجة جاهزة دون اتصال بالخادم (item.demo === true).
+ * ─────────────────────────────────────────────────────────────────────────── */
+const DEMO_FLAG = "sada_demo_pending_seeded_v1";
+
+// نتيجة تحليل جاهزة تطابق شكل استجابة /process-audio (transcription نص + extracted + trace).
+export const DEMO_RESULT = {
+  transcription:
+    "بسم الله نفتح السوم على تمر السكري الفاخر من مزارع القصيم، البداية مية وعشرين ريال… زايد مية وثلاثين… مية وأربعين… خمسة وأربعين… بيع! مبروك على أبو فهد",
+  extracted: {
+    product: "سكري",
+    price: 145,
+    unit: "كرتون",
+    quantity: 1,
+    confidence: "high",
+    action: "إغلاق",
+    source: "demo_offline",
+  },
+  voiceprint: {
+    is_match: true,
+    best_score: 0.93,
+    label: "registered_auctioneer",
+    status: "ok",
+    enabled: true,
+    note: "الصوت يطابق بصمة الدلّال المسجّل (وضع العرض).",
+  },
+  trace: [
+    { skill: "transcribe_audio", status: "ok" },
+    { skill: "extract_auction_data", status: "ok" },
+    { skill: "classify_auction_state", status: "ok", action: "إغلاق" },
+    { step: "decision_route", route_chosen: "offline_demo", status: "ok" },
+    { skill: "verify_voiceprint", status: "ok", is_match: true, best_score: 0.93 },
+  ],
+  auction_created: null,
+};
+
+function demoItem() {
+  return {
+    file: new Blob(["demo-offline-recording"], { type: "audio/webm" }),
+    sessionId: null,
+    durationSec: 18,
+    demo: true,
+    demoResult: DEMO_RESULT,
+    createdAt: Date.now(),
+  };
+}
+
+/**
+ * يزرع تسجيلاً معلّقاً تجريبياً واحداً.
+ * - تلقائياً (force=false): مرة واحدة فقط على هذا الجهاز، وفقط إن لم يكن
+ *   هناك تسجيل تجريبي بالطابور أصلاً — حتى لا يزعج المستخدم بتكرار.
+ * - يدوياً (force=true): يضيف واحداً جديداً دائماً (زر "تجربة").
+ * يعيد true إذا أُضيف عنصر.
+ */
+export async function seedDemoPending(force = false) {
+  if (!force && localStorage.getItem(DEMO_FLAG)) return false;
+  const db = await getDB();
+  if (!force) {
+    const all = await db.getAll(STORE);
+    if (all.some((x) => x.demo)) {
+      localStorage.setItem(DEMO_FLAG, "1");
+      return false;
+    }
+  }
+  await db.add(STORE, demoItem());
+  localStorage.setItem(DEMO_FLAG, "1");
+  return true;
+}
