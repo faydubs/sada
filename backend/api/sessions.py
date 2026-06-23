@@ -37,19 +37,24 @@ def start_session(
             detail="لا يمكنك إنشاء جلسة لدلّال آخر",
         )
 
-    existing = (
+    # أغلق أي جلسة مفتوحة سابقة لنفس الدلّال تلقائياً بدل رفض البدء (تجربة أسلس
+    # — لا مزيد من رسالة "يوجد جلسة مفتوحة بالفعل"). نحسب إيرادها قبل إغلاقها.
+    open_sessions = (
         db.query(SessionModel)
         .filter(
             SessionModel.dallal_id == data.dallal_id,
             SessionModel.status == SessionStatus.active,
         )
-        .first()
+        .all()
     )
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"يوجد جلسة مفتوحة بالفعل (id={existing.id})، أغلقها أولاً",
-        )
+    for prev in open_sessions:
+        prev_total = (
+            db.query(func.sum(Auction.final_price))
+            .filter(Auction.session_id == prev.id, Auction.final_price.isnot(None))
+            .scalar()
+        ) or 0
+        prev.status = SessionStatus.closed
+        prev.total_revenue = prev_total
 
     session = SessionModel(
         dallal_id=data.dallal_id,

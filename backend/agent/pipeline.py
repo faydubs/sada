@@ -62,13 +62,35 @@ def _normalize_audio(file_path: str) -> str:
 # تحميل نموذج Whisper مرة واحدة فقط
 # ---------------------------------------------------------------------------
 
+# ── موجِّه عربي افتراضي: يُملي على Whisper سياق المجال (تمور + مزاد) فيحسّن
+#    التعرف على أسماء الأصناف والمصطلحات بدرجة كبيرة. يمكن تجاوزه عبر
+#    WHISPER_INITIAL_PROMPT في البيئة.
+_DEFAULT_AR_PROMPT = (
+    "حراج ومزاد تمور سعودي. أصناف: سكري، عجوة، صقعي، خلاص، برحي، مجدول، "
+    "خضري، صفري، روثانة، نبتة علي، مبروم، عنبرة، رشودية، شيشي. مصطلحات: "
+    "البداية، السوم، زايد، بيع، مبروك، كرتون، كيس، صندوق، كيلو، ريال."
+)
+
+
 @lru_cache(maxsize=1)
 def _get_whisper_model() -> WhisperModel:
-    """يحمّل نموذج Whisper مرة واحدة ويعيد استخدامه."""
+    """
+    يحمّل نموذج Whisper مرة واحدة ويعيد استخدامه.
+    الحجم/الجهاز/نوع الحساب تُقرأ من الإعدادات (WHISPER_*) — الافتراضي medium
+    لرفع دقة العربية (small كان أضعف). غيّرها عبر البيئة عند الحاجة.
+    """
+    size = compute = device = None
+    try:
+        from core.config import settings
+        size = settings.WHISPER_MODEL_SIZE
+        device = settings.WHISPER_DEVICE
+        compute = settings.WHISPER_COMPUTE_TYPE
+    except Exception:
+        pass
     return WhisperModel(
-        "small",
-        device="cpu",
-        compute_type="int8",
+        size or "medium",
+        device=device or "cpu",
+        compute_type=compute or "int8",
     )
 
 
@@ -97,10 +119,20 @@ def transcribe_audio(file_path: str) -> dict:
     normalized_path = _normalize_audio(str(path))
     is_temp_file = normalized_path != str(path)
 
+    # موجِّه السياق: من البيئة إن وُجد وإلا الموجِّه العربي الافتراضي للمجال.
+    initial_prompt = None
+    try:
+        from core.config import settings
+        initial_prompt = settings.WHISPER_INITIAL_PROMPT or _DEFAULT_AR_PROMPT
+    except Exception:
+        initial_prompt = _DEFAULT_AR_PROMPT
+
     try:
         segments_generator, info = model.transcribe(
             normalized_path,
             language="ar",
+            task="transcribe",
+            initial_prompt=initial_prompt,
             vad_filter=True,
             vad_parameters=dict(
                 min_silence_duration_ms=1000,
@@ -109,6 +141,8 @@ def transcribe_audio(file_path: str) -> dict:
             no_speech_threshold=0.6,
             condition_on_previous_text=False,
             beam_size=5,
+            best_of=5,
+            temperature=[0.0, 0.2, 0.4],
         )
 
         segments = []

@@ -139,12 +139,14 @@ export default function LiveSession() {
     setError(null);
     let done = 0;
     let failed = 0;
+    let lastResult = null; // نتيجة آخر تسجيل أوفلاين تمّت معالجته — لعرضها للدلّال
     for (const item of items) {
       setFlushProgress({ done, total: items.length });
       try {
         const id = item.sessionId || (await ensureSession());
         const file = new File([item.file], `queued.${(item.file.type || "audio/webm").includes("mp4") ? "mp4" : "webm"}`, { type: item.file.type || "audio/webm" });
-        await auctionsApi.processAudio(id, file);
+        const { data } = await auctionsApi.processAudio(id, file);
+        lastResult = data;
         await removePending(item.id);
         done += 1;
       } catch {
@@ -154,9 +156,14 @@ export default function LiveSession() {
     setFlushProgress(null);
     setFlushing(false);
     await refreshPending();
+    // اعرض نتيجة آخر جلسة أوفلاين حُلّلت حتى يرى الدلّال مخرجاتها مباشرة.
+    if (lastResult) {
+      setResult(lastResult);
+      setPhase("result");
+    }
     setNotice(
       failed === 0
-        ? `تم تحليل ${formatNumber(done)} جلسة معلّقة ✓`
+        ? `تم تحليل ${formatNumber(done)} جلسة معلّقة ✓ (تُعرض نتيجة الأخيرة)`
         : `حُلّلت ${formatNumber(done)} وتعذّر ${formatNumber(failed)} — أعد المحاولة لاحقاً.`
     );
   }, [flushing, ensureSession, refreshPending]);
