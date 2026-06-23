@@ -1,0 +1,20 @@
+# لا حاجة للواجهة الأمامية داخل صورة الـ backend
+frondend/
+node_modules/
+
+# بيئات وملفات مؤقتة
+**/.venv/
+venv/
+venv312/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+*.log
+*.out
+.git/
+
+# أسرار وملفات مرفوعة
+**/.env
+backend/uploads/
+voiceprints/
+*.wav
