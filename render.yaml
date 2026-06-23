@@ -1,0 +1,51 @@
+# Render Blueprint — صدى التمر (الواجهة الخلفية FastAPI)
+# نشر: ادخل render.com → New → Blueprint → اربط مستودع GitHub → سيقرأ هذا الملف.
+# ثم اضبط القيم السرّية (sync:false) من لوحة Render، فهي لا تُحفظ في المستودع.
+#
+# ملاحظة الذاكرة: تحويل الصوت (Whisper) يحتاج ذاكرة. للوحات والتحليلات فقط
+# تكفي خطة starter. لتشغيل التفريغ الصوتي بدقّة أعلى استخدم WHISPER_MODEL_SIZE=small
+# مع خطة standard (2GB) أو أعلى.
+
+services:
+  - type: web
+    name: sada-altamr-api
+    runtime: python
+    rootDir: backend
+    plan: starter
+    region: frankfurt
+    healthCheckPath: /
+    # نثبّت torch/torchaudio من فهرس CPU أولاً (أصغر وأسرع بكثير من نسخة CUDA
+    # الافتراضية)، ثم بقية الاعتماديات.
+    buildCommand: >-
+      pip install --upgrade pip &&
+      pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu &&
+      pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+      # ── أسرار: تُضبط يدوياً في لوحة Render (لا تُرفع للمستودع) ──
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_SIGNUP_CODE
+        sync: false
+      # ── CORS: ضع رابط واجهة Vercel هنا، مثال: https://sada-altamr.vercel.app ──
+      - key: CORS_ORIGINS
+        sync: false
+      # ── إعداد Whisper للسحابة ──
+      - key: WHISPER_MODEL_SIZE
+        value: small
+      - key: WHISPER_DEVICE
+        value: cpu
+      - key: WHISPER_COMPUTE_TYPE
+        value: int8

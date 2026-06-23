@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["frondend/node_modules/vite/bin/vite.js", "frondend", "--port", "5173"],
+      "port": 5173,
+      "autoPort": false
+    }
+  ]
+}

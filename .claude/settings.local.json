@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:lucky-syrniki-00e855.netlify.app)",
+      "WebFetch(domain:colab.research.google.com)",
+      "Bash(npm --version)",
+      "Bash(echo \"npm: $\\(npm --version 2>&1\\)\")",
+      "PowerShell($n = \\(Get-Command node -ErrorAction SilentlyContinue\\); if \\($n\\) { \"node: $\\(node --version\\)\"; \"npm: $\\(npm --version\\)\" } else { \"node not found\" }; \"git: $\\(\\(Get-Command git -ErrorAction SilentlyContinue\\).Source\\)\")",
+      "Bash(ls \"C:/Users/Faydu/.claude/projects/C--Users-Faydu-OneDrive-Desktop-myproject/memory/\" 2>/dev/null && echo \"---MEMORY.md---\" && cat \"C:/Users/Faydu/.claude/projects/C--Users-Faydu-OneDrive-Desktop-myproject/memory/MEMORY.md\" 2>/dev/null || echo \"no MEMORY.md yet\")",
+      "PowerShell(explorer.exe \"C:\\\\Users\\\\Faydu\\\\OneDrive\\\\Desktop\\\\myproject\\\\frondend\")",
+      "Bash(cd /tmp)",
+      "Bash(python -)",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 python -)",
+      "Bash(mkdir -p \"C:/Users/Faydu/Downloads/_design\")",
+      "Bash(cp /tmp/dec_*.js /tmp/template.html \"C:/Users/Faydu/Downloads/_design/\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(export PYTHONUTF8=1)",
+      "WebFetch(domain:font.thmanyah.com)",
+      "PowerShell(& \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\venv\\\\Scripts\\\\python.exe\" -c \"import uvicorn, fastapi, sqlalchemy; print\\('venv OK', uvicorn.__version__\\)\")",
+      "PowerShell(& \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\venv\\\\Scripts\\\\python.exe\" --version)",
+      "PowerShell($cmds = @\\('py','python','python3'\\); foreach\\($c in $cmds\\){ $p=\\(Get-Command $c -ErrorAction SilentlyContinue\\); if\\($p\\){ Write-Output \"$c -> $\\($p.Source\\)\" } }; Write-Output \"---py versions---\"; try { py -0p } catch { Write-Output \"py launcher not available\" })",
+      "PowerShell($py = \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\backend\\\\.venv\\\\Scripts\\\\python.exe\"; & $py -m pip install --upgrade pip > \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\backend\\\\_pip_install.log\" 2>&1; & $py -m pip install -r \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\backend\\\\requirements.txt\" >> \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\backend\\\\_pip_install.log\" 2>&1; Write-Output \"DONE exit=$LASTEXITCODE\")",
+      "PowerShell(Push-Location \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\frondend\"; & npm install react-simple-maps jspdf html2canvas idb --no-audit --no-fund > \"C:\\\\Users\\\\r\\\\Downloads\\\\myproject\\\\myproject\\\\frondend\\\\_npm_install.log\" 2>&1; Write-Output \"DONE exit=$LASTEXITCODE\"; Pop-Location)"
+    ]
+  }
+}
