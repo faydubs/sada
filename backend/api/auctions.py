@@ -83,6 +83,7 @@ async def process_audio(
             "extracted": extracted,
             "voiceprint": result.get("voiceprint"),
             "trace": trace,
+            "analysis": result.get("analysis"),   # المخطط الغني الكامل (الجديد)
             "auction_created": None,
         }
 

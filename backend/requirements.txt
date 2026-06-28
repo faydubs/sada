@@ -18,8 +18,12 @@ xgboost
 # ImportError ويُسقط مسار process-audio عند غياب Gemini.
 scikit-learn
 
-# ── Gemini (اختياري — لرفع دقة الاستخراج)
+# ── Gemini (المسار الأساسي للدقّة — تحليل الصوت الأصلي + النص)
 google-genai
+# tenacity: إعادة محاولة نداءات Gemini (backoff). av: تحويل صوت المتصفح (webm)
+# إلى wav لإرساله لـ Gemini. كلاهما كان يأتي عبر اعتماديات أخرى — نثبّته صراحةً.
+tenacity
+av
 
 # ── VoicePrint (اختياري — للتحقق من هوية الدلال)
 speechbrain

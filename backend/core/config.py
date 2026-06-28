@@ -18,8 +18,18 @@ class Settings(BaseSettings):
     ALLAM_API_KEY: str | None = None
     ALLAM_MODEL: str = "allam"
 
-    # ── Gemini — اختياري: إذا غير موجود يُستخدم extractor.py تلقائياً
+    # ── Gemini — اختياري: إذا غير موجود يُستخدم Whisper + المستخرِج تلقائياً
     GEMINI_API_KEY: str | None = None
+    # موديل تحليل الصوت الأصلي (أدقّ مسار) — قابل للتبديل دون تعديل الكود.
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    # موديل تحليل النص (المسار الاحتياطي بعد Whisper) — افتراضياً نفس الموديل.
+    GEMINI_TEXT_MODEL: str = "gemini-2.5-flash"
+    # تفعيل تحليل الصوت الأصلي عبر Gemini (المسار الأساسي).
+    GEMINI_AUDIO_ENABLED: bool = True
+    # عدد إعادات المحاولة الإضافية عند فشل نداء Gemini (tenacity).
+    GEMINI_MAX_RETRIES: int = 2
+    # حدّ مخرجات Gemini — مرتفع كفايةً حتى لا يُقتطع JSON عند تفريغ مقطع طويل.
+    GEMINI_MAX_OUTPUT_TOKENS: int = 8192
 
     WHISPER_MODEL_SIZE: str = "medium"
     WHISPER_DEVICE: str = "cpu"
