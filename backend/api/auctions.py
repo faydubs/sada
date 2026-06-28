@@ -18,7 +18,7 @@ from core.database import get_db
 from core.websocket_manager import manager
 from models.models import Auction, AuctionStatus, User
 from models.models import Session as SessionModel
-from schemas.schemas import AuctionResponse, AuctionUpdate
+from schemas.schemas import AuctionResponse, AuctionReviewCreate, AuctionUpdate
 
 router = APIRouter()
 
@@ -101,57 +101,61 @@ async def process_audio(
                 "trace": trace,
             })
 
-        # ── أنشئ مزاداً تلقائياً عند ثقة كافية وبيانات أساسية مكتملة.
-        #    يشمل الآن المزادات المُغلقة (sold) لا الافتتاح فقط — لأن Gemini
-        #    يعطي الصورة الكاملة (بائع/مشتري/مزايدات/سعر نهائي) من مقطع واحد.
-        ana = result.get("analysis") or {}
-        ana_status = ana.get("status")
-        price = ana.get("final_price") if ana.get("final_price") is not None else ana.get("opening_price")
-        if (
-            extracted["product"]
-            and price is not None
-            and extracted["confidence"] in ("medium", "high")
-            and ana_status in ("open", "sold")
-        ):
-            is_sold = ana_status == "sold"
-            auction = Auction(
-                session_id=session_id,
-                product_name=extracted["product"],
-                quantity=ana.get("quantity") or 1,  # قيمة مبدئية — تُحدَّث يدوياً عند الحاجة
-                unit=ana.get("unit") or "غير محدد",
-                opening_price=ana.get("opening_price"),
-                final_price=ana.get("final_price") if is_sold else ana.get("opening_price"),
-                buyer_name=ana.get("buyer_name") or ana.get("winner"),
-                seller_name=ana.get("seller_name"),
-                winner=ana.get("winner"),
-                currency=ana.get("currency") or "SAR",
-                bids=ana.get("bids") or [],
-                confidence=ana.get("confidence"),
-                notes=ana.get("notes"),
-                transcript=ana.get("transcript"),
-                analysis_status=ana_status,
-                model_used=ana.get("model_used"),
-                status=AuctionStatus.closed if is_sold else AuctionStatus.active,
-                closed_at=datetime.now(timezone.utc) if is_sold else None,
-            )
-            db.add(auction)
-            db.commit()
-            db.refresh(auction)
-            auction_data = AuctionResponse.model_validate(auction).model_dump(mode="json")
-            response["auction_created"] = auction_data
-
-            # ── ابعث إشعاراً منفصلاً بأن مزاداً جديداً انفتح
-            await manager.broadcast(session_id, {
-                "type": "auction_started",
-                "auction": auction_data,
-            })
-
+        # ── لا نحفظ نتائج الـ AI تلقائياً: تُعرض للدلّال في شاشة مراجعة قابلة
+        #    للتعديل، ثم تُحفظ صراحةً عبر POST /api/auctions بعد الاعتماد البشري.
         return response
 
     finally:
         # ── احذف الملف المؤقت دائماً، حتى لو حدث خطأ
         if tmp_path and Path(tmp_path).exists():
             Path(tmp_path).unlink()
+
+
+@router.post("/", response_model=AuctionResponse, status_code=status.HTTP_201_CREATED)
+async def create_auction(
+    data: AuctionReviewCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    أنشئ مزاداً من بيانات راجعها الدلّال يدوياً بعد التحليل (شاشة المراجعة).
+    هذا هو مسار الحفظ الوحيد لنتائج التحليل — لا حفظ تلقائي قبل المراجعة البشرية.
+    """
+    session = db.query(SessionModel).filter(SessionModel.id == data.session_id).first()
+    if not session:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="الجلسة غير موجودة")
+    if current_user.role.value != "admin" and session.dallal_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="لا يمكنك الإضافة لجلسة دلّال آخر")
+
+    is_closed = data.status == AuctionStatus.closed
+    auction = Auction(
+        session_id=data.session_id,
+        product_name=data.product_name,
+        quantity=data.quantity,
+        unit=data.unit or "غير محدد",
+        opening_price=data.opening_price,
+        final_price=data.final_price,
+        buyer_name=data.buyer_name,
+        buyer_number=data.buyer_number,
+        seller_name=data.seller_name,
+        winner=data.winner,
+        currency=data.currency or "SAR",
+        bids=data.bids,
+        notes=data.notes,
+        transcript=data.transcript,
+        confidence=data.confidence,
+        analysis_status=data.analysis_status,
+        model_used=data.model_used,
+        status=data.status,
+        closed_at=datetime.now(timezone.utc) if is_closed else None,
+    )
+    db.add(auction)
+    db.commit()
+    db.refresh(auction)
+
+    auction_data = AuctionResponse.model_validate(auction).model_dump(mode="json")
+    await manager.broadcast(data.session_id, {"type": "auction_started", "auction": auction_data})
+    return auction_data
 
 
 @router.patch("/{auction_id}", response_model=AuctionResponse)
@@ -178,7 +182,7 @@ async def update_auction(
 
     # طبّق الحقول المُرسَلة فقط
     fields = data.model_dump(exclude_unset=True)
-    for key in ("product_name", "quantity", "unit", "final_price", "buyer_name"):
+    for key in ("product_name", "quantity", "unit", "final_price", "buyer_name", "buyer_number"):
         if key in fields and fields[key] is not None:
             setattr(auction, key, fields[key])
 

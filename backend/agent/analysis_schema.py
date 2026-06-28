@@ -38,6 +38,7 @@ class AuctionAnalysis(BaseModel):
     product_type: Optional[str] = Field(default=None, description="نوع/صنف التمر (سكري، مجدول، عجوة…) أو null")
     seller_name: Optional[str] = Field(default=None, description="اسم البائع/صاحب البضاعة إن ذُكر، وإلا null")
     buyer_name: Optional[str] = Field(default=None, description="اسم المشتري الحالي/الأبرز إن ذُكر، وإلا null")
+    buyer_number: Optional[str] = Field(default=None, description="رقم المشتري/المضرب إن ذُكر (مثل: المشتري رقم ٥)، وإلا null")
     winner: Optional[str] = Field(default=None, description="اسم الفائز بالمزاد عند البيع، وإلا null")
 
     # ── الأسعار ──
@@ -66,6 +67,7 @@ class GeminiAuctionSchema(BaseModel):
     product_type: Optional[str] = None
     seller_name: Optional[str] = None
     buyer_name: Optional[str] = None
+    buyer_number: Optional[str] = None
     winner: Optional[str] = None
     opening_price: Optional[float] = None
     final_price: Optional[float] = None

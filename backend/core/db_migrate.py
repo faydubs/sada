@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 # (اسم العمود، تعريفه SQL) — يطابق الأعمدة المضافة في models.Auction
 _AUCTION_COLUMNS = [
+    ("buyer_number", "varchar(50)"),
     ("seller_name", "varchar(200)"),
     ("winner", "varchar(200)"),
     ("opening_price", "numeric(14,3)"),

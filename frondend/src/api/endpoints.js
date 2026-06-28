@@ -43,6 +43,9 @@ export const sessionsApi = {
 
 // ─────────────────────────── Auctions ───────────────────────────
 export const auctionsApi = {
+  // إنشاء مزاد من بيانات راجعها الدلّال يدوياً (لا حفظ تلقائي قبل المراجعة)
+  create: (data) => client.post("/api/auctions/", data),
+
   // تحديث/إغلاق مزاد (تصحيح البيانات وتعيين السعر النهائي والمشتري)
   update: (auctionId, data) => client.patch(`/api/auctions/${auctionId}`, data),
 

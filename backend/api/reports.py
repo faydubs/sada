@@ -52,8 +52,12 @@ def get_report(
             "product_name": a.product_name,
             "quantity": float(a.quantity),
             "unit": a.unit,
+            "opening_price": float(a.opening_price) if a.opening_price is not None else None,
             "final_price": float(a.final_price) if a.final_price is not None else None,
             "buyer_name": a.buyer_name,
+            "buyer_number": a.buyer_number,
+            "seller_name": a.seller_name,
+            "currency": a.currency,
             "status": a.status.value,
             "started_at": a.started_at.isoformat() if a.started_at else None,
             "closed_at": a.closed_at.isoformat() if a.closed_at else None,
@@ -91,8 +95,9 @@ def export_report(
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow([
-        "auction_id", "product_name", "quantity", "unit",
-        "final_price", "buyer_name", "status", "started_at", "closed_at",
+        "auction_id", "product_name", "quantity", "unit", "opening_price",
+        "final_price", "buyer_name", "buyer_number", "seller_name", "currency",
+        "status", "started_at", "closed_at",
     ])
     for a in auctions:
         writer.writerow([
@@ -100,8 +105,12 @@ def export_report(
             a.product_name,
             float(a.quantity),
             a.unit,
+            float(a.opening_price) if a.opening_price is not None else "",
             float(a.final_price) if a.final_price is not None else "",
             a.buyer_name or "",
+            a.buyer_number or "",
+            a.seller_name or "",
+            a.currency or "",
             a.status.value,
             a.started_at.isoformat() if a.started_at else "",
             a.closed_at.isoformat() if a.closed_at else "",

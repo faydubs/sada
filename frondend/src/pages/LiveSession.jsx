@@ -3,16 +3,11 @@ import { auctionsApi, sessionsApi } from "../api/endpoints.js";
 import { apiError } from "../api/client.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useAudioRecorder } from "../hooks/useAudioRecorder.js";
+import { useSpeechRecognition } from "../hooks/useSpeechRecognition.js";
 import { useOnline } from "../hooks/useOnline.js";
-import { addPending, getAllPending, removePending, countPending, seedDemoPending } from "../lib/offlineQueue.js";
-import { CONFIDENCE, formatCurrency, formatDuration, formatNumber } from "../lib/format.js";
+import { addPending, getAllPending, removePending, countPending, purgeDemoPending } from "../lib/offlineQueue.js";
+import { formatDuration, formatNumber } from "../lib/format.js";
 import { Brand, Icon, Spinner } from "../components/ui.jsx";
-
-const ACTION_LABEL = {
-  افتتاح: { txt: "افتتاح", cls: "chip-green" },
-  إغلاق: { txt: "إغلاق", cls: "chip-green" },
-  جارٍ: { txt: "جارٍ", cls: "chip-muted" },
-};
 
 // ── عرض "مسار التحليل" بصورة منطقية: عنوان عربي لكل خطوة + تفصيل ذي معنى ──────
 const TRACE_TITLE = {
@@ -23,31 +18,25 @@ const TRACE_TITLE = {
   classify: "تصنيف حالة المزاد",
   classify_auction_state: "تصنيف حالة المزاد",
   gemini: "تحليل ذكي (Gemini)",
+  gemini_audio: "تحليل الصوت (Gemini)",
+  gemini_text: "تحليل النص (Gemini)",
   parse_with_gemini: "تحليل ذكي (Gemini)",
+  legacy_extractor: "المستخرِج المحلي",
   decision_route: "اختيار أدقّ مصدر",
   decision_confidence_gate: "تعزيز الثقة بالبصمة",
   voiceprint: "التحقق من البصمة الصوتية",
   verify_voiceprint: "التحقق من البصمة الصوتية",
 };
 const STATUS_AR = { ok: "تم", error: "تعذّر", skipped: "تُخطّي", low_confidence: "ثقة منخفضة", unavailable: "غير متاح" };
-const ROUTE_AR = {
-  extractor_only: "المستخرِج المحلي",
-  gemini: "Gemini",
-  gemini_low_fallback_extractor: "المستخرِج المحلي",
-  gemini_low_kept: "Gemini",
-  voiceprint_boost: "تعزيز بالبصمة",
-  offline_demo: "وضع الأوفلاين",
-  none_empty_transcript: "لا يوجد كلام",
-};
 
 function traceTitle(t) {
   return TRACE_TITLE[t.skill] || TRACE_TITLE[t.step] || t.skill || t.step || "خطوة";
 }
 function traceDetail(t) {
-  if (t.action) return t.action;                                       // إغلاق / افتتاح / جارٍ
+  if (t.action) return t.action;
   if (t.is_match != null) return t.is_match ? `مطابقة (${t.best_score ?? "—"})` : "غير مطابقة";
-  if (t.confidence) return CONFIDENCE[t.confidence]?.label || t.confidence;
-  if (t.route_chosen) return ROUTE_AR[t.route_chosen] || "تم";
+  if (t.confidence != null) return typeof t.confidence === "number" ? t.confidence.toFixed(2) : t.confidence;
+  if (t.route_chosen) return TRACE_TITLE[t.route_chosen] || "تم";
   if (t.chars != null) return `${formatNumber(t.chars)} حرف`;
   return STATUS_AR[t.status] || t.status || "—";
 }
@@ -55,18 +44,55 @@ function traceOk(t) {
   return (t.status ? t.status === "ok" : true) && t.is_match !== false;
 }
 
+// نص → رقم أو null (للحقول العددية في نموذج المراجعة)
+function num(v) {
+  if (v === "" || v == null) return null;
+  const n = Number(v);
+  return Number.isNaN(n) ? null : n;
+}
+
+// يبني نموذج المراجعة القابل للتعديل من استجابة /process-audio
+function buildForm(data) {
+  const a = data?.analysis || {};
+  const ex = data?.extracted || {};
+  return {
+    product_name: a.product_type ?? ex.product ?? "",
+    quantity: a.quantity ?? ex.quantity ?? "",
+    unit: a.unit ?? ex.unit ?? "",
+    opening_price: a.opening_price ?? "",
+    final_price: a.final_price ?? ex.price ?? "",
+    buyer_name: a.buyer_name ?? "",
+    buyer_number: a.buyer_number ?? ex.buyer_number ?? "",
+    seller_name: a.seller_name ?? "",
+    winner: a.winner ?? "",
+    currency: a.currency ?? "SAR",
+    notes: a.notes ?? "",
+    status: a.status === "sold" ? "closed" : "active",
+    // ميتاداتا تُمرَّر كما هي للحفظ (غير قابلة للتعديل من الواجهة)
+    bids: Array.isArray(a.bids) ? a.bids : null,
+    transcript: a.transcript ?? data?.transcription ?? "",
+    confidence: a.confidence ?? null,
+    analysis_status: a.status ?? null,
+    model_used: a.model_used ?? null,
+  };
+}
+
 /*
  * تبويب "تسجيل مزاد" للدلّال (التطبيق الجوال).
- * الميكروفون هو العنصر الأبرز: ضغطه يبدأ الجلسة + التسجيل؛ عند الإيقاف تُحلَّل
- * النتيجة وتُعرض، ثم زر "اعتماد" يثبّتها. يدعم الوضع دون اتصال عبر طابور IndexedDB.
+ * الميكروفون يبدأ الجلسة + التسجيل (مع عدّاد دقيق + إيقاف مؤقت + تفريغ حيّ).
+ * بعد الإيقاف يُحلَّل المقطع، ثم تُعرض البيانات في نموذج قابل للتعديل، ولا
+ * تُحفظ إلا بعد مراجعة الدلّال واعتماده. يدعم الوضع دون اتصال عبر IndexedDB.
  */
 export default function LiveSession() {
   const { user } = useAuth();
   const online = useOnline();
+  const speech = useSpeechRecognition("ar-SA");
 
   const [sessionId, setSessionId] = useState(null);
-  const [phase, setPhase] = useState("idle"); // idle | processing | result
-  const [result, setResult] = useState(null);
+  const [phase, setPhase] = useState("idle"); // idle | processing | review
+  const [form, setForm] = useState(null);      // نموذج المراجعة القابل للتعديل
+  const [result, setResult] = useState(null);  // الاستجابة الخام (للمزايدات/المسار)
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [pending, setPending] = useState(0);
@@ -80,11 +106,11 @@ export default function LiveSession() {
     try { setPending(await countPending()); } catch { /* ignore */ }
   }, []);
 
-  // عند الإقلاع: ازرع تسجيلاً معلّقاً تجريبياً (مرة واحدة) لعرض تجربة الأوفلاين،
-  // ثم حُلّ الجلسة النشطة (إن وُجدت ونحن متصلون) + اعرف عدد المعلّق
+  // عند الإقلاع: نظّف أي تسجيل معلّق تجريبي قديم (ميزة أُلغيت) + اعرف عدد المعلّق،
+  // ثم حُلّ الجلسة النشطة إن وُجدت ونحن متصلون.
   useEffect(() => {
     (async () => {
-      try { await seedDemoPending(false); } catch { /* ignore */ }
+      try { await purgeDemoPending(); } catch { /* ignore */ }
       refreshPending();
     })();
     if (!online) return;
@@ -97,7 +123,6 @@ export default function LiveSession() {
     })();
   }, [online, refreshPending]);
 
-  // يضمن وجود جلسة نشطة (يعيد id) — يُنشئها عند الحاجة (يتطلب اتصالاً)
   const ensureSession = useCallback(async () => {
     if (sessionRef.current) return sessionRef.current;
     const { data } = await sessionsApi.list();
@@ -115,7 +140,6 @@ export default function LiveSession() {
       setError(null);
       const durationSec = recSecondsRef.current;
       if (!online) {
-        // دون اتصال: احفظ محلياً واخرج
         try {
           await addPending({ file, sessionId: sessionRef.current ?? null, durationSec });
           await refreshPending();
@@ -131,10 +155,10 @@ export default function LiveSession() {
         const id = await ensureSession();
         const { data } = await auctionsApi.processAudio(id, file);
         setResult(data);
-        setPhase("result");
+        setForm(buildForm(data));
+        setPhase("review");
       } catch (err) {
         setError(apiError(err, "تعذّرت معالجة المقطع — حُفظ محلياً لإعادة المحاولة."));
-        // فشل الإرسال رغم الاتصال → احفظه في الطابور حتى لا يضيع
         try { await addPending({ file, sessionId: sessionRef.current ?? null, durationSec }); await refreshPending(); } catch { /* ignore */ }
         setPhase("idle");
       }
@@ -142,94 +166,123 @@ export default function LiveSession() {
     [online, ensureSession, refreshPending]
   );
 
-  const { recording, seconds, error: recError, start, stop } = useAudioRecorder(handleAudioReady);
+  const { recording, paused, seconds, error: recError, start, pause, resume, stop } = useAudioRecorder(handleAudioReady);
   const recSecondsRef = useRef(0);
   recSecondsRef.current = seconds;
 
   async function handleMicPress() {
     setError(null);
     setNotice(null);
-    if (recording) { stop(); return; }
-    // ابدأ الجلسة (إن أمكن) ثم التسجيل
+    if (recording) {
+      stop();
+      speech.stop();
+      return;
+    }
     if (online) {
       try { await ensureSession(); }
       catch (err) { setError(apiError(err, "تعذّر بدء الجلسة")); return; }
     }
     setResult(null);
+    setForm(null);
     setPhase("idle");
     start();
+    speech.start(); // تفريغ حيّ (يتدهور بلطف إن لم يكن مدعوماً)
   }
 
-  // اعتماد النتيجة → إنهاء الجلسة وتثبيت المبيعات
-  async function confirmResult() {
+  function setField(key, value) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  // حفظ المزاد بعد المراجعة → إنشاء سجل + إنهاء الجلسة (لا حفظ تلقائي قبل ذلك)
+  async function saveAuction() {
+    if (!form?.product_name?.trim()) { setError("أدخل نوع التمر قبل الحفظ"); return; }
     const id = sessionRef.current;
-    if (!id) { setPhase("idle"); setResult(null); return; }
+    if (!id) { setError("لا توجد جلسة نشطة"); return; }
+    setSaving(true);
+    setError(null);
     try {
+      await auctionsApi.create({
+        session_id: id,
+        product_name: form.product_name.trim(),
+        quantity: num(form.quantity) ?? 1,
+        unit: form.unit?.trim() || "غير محدد",
+        opening_price: num(form.opening_price),
+        final_price: num(form.final_price),
+        buyer_name: form.buyer_name?.trim() || null,
+        buyer_number: form.buyer_number?.trim() || null,
+        seller_name: form.seller_name?.trim() || null,
+        winner: form.winner?.trim() || null,
+        currency: form.currency?.trim() || "SAR",
+        bids: form.bids || null,
+        notes: form.notes?.trim() || null,
+        transcript: form.transcript || null,
+        confidence: form.confidence ?? null,
+        analysis_status: form.analysis_status || null,
+        model_used: form.model_used || null,
+        status: form.status === "closed" ? "closed" : "active",
+      });
       await sessionsApi.end(id);
       setSessionId(null);
+      setForm(null);
       setResult(null);
       setPhase("idle");
-      setNotice("تم اعتماد المزاد وإنهاء الجلسة ✓");
+      setNotice("تم حفظ المزاد وإنهاء الجلسة ✓");
     } catch (err) {
-      setError(apiError(err, "تعذّر اعتماد الجلسة"));
+      setError(apiError(err, "تعذّر حفظ المزاد"));
+    } finally {
+      setSaving(false);
     }
   }
 
-  // تحليل الطابور المعلّق (يدوياً أو تلقائياً عند عودة الاتصال)
+  function discardReview() {
+    setForm(null);
+    setResult(null);
+    setPhase("idle");
+  }
+
+  // تفريغ الطابور المعلّق (تسجيلات الأوفلاين الحقيقية) — يعرض آخرها للمراجعة
   const flushQueue = useCallback(async () => {
     if (flushing) return;
     const items = await getAllPending();
     if (!items.length) return;
     setFlushing(true);
     setError(null);
-    let done = 0;
-    let failed = 0;
-    let lastResult = null; // نتيجة آخر تسجيل أوفلاين تمّت معالجته — لعرضها للدلّال
+    let done = 0, failed = 0, lastData = null;
     for (const item of items) {
       setFlushProgress({ done, total: items.length });
       try {
-        // تسجيل تجريبي: نعرض نتيجته الجاهزة دون اتصال بالخادم (محاكاة الأوفلاين).
-        if (item.demo) {
-          lastResult = item.demoResult;
-          await removePending(item.id);
-          done += 1;
-          continue;
-        }
         const id = item.sessionId || (await ensureSession());
         const file = new File([item.file], `queued.${(item.file.type || "audio/webm").includes("mp4") ? "mp4" : "webm"}`, { type: item.file.type || "audio/webm" });
         const { data } = await auctionsApi.processAudio(id, file);
-        lastResult = data;
+        lastData = data;
         await removePending(item.id);
         done += 1;
       } catch {
-        failed += 1; // أبقِ العنصر في الطابور لإعادة المحاولة لاحقاً
+        failed += 1;
       }
     }
     setFlushProgress(null);
     setFlushing(false);
     await refreshPending();
-    // اعرض نتيجة آخر جلسة أوفلاين حُلّلت حتى يرى الدلّال مخرجاتها مباشرة.
-    if (lastResult) {
-      setResult(lastResult);
-      setPhase("result");
+    if (lastData) {
+      setResult(lastData);
+      setForm(buildForm(lastData));
+      setPhase("review");
     }
     setNotice(
       failed === 0
-        ? `تم تحليل ${formatNumber(done)} جلسة معلّقة ✓ (تُعرض نتيجة الأخيرة)`
-        : `حُلّلت ${formatNumber(done)} وتعذّر ${formatNumber(failed)} — أعد المحاولة لاحقاً.`
+        ? `تم تحليل ${formatNumber(done)} تسجيل معلّق ✓ (راجِع الأخير واحفظه)`
+        : `حُلّل ${formatNumber(done)} وتعذّر ${formatNumber(failed)} — أعد المحاولة لاحقاً.`
     );
   }, [flushing, ensureSession, refreshPending]);
 
-  // تفريغ تلقائي عند عودة الاتصال
   useEffect(() => {
     if (online && pending > 0 && !flushing && !recording) flushQueue();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [online]);
 
   const showBanner = pending > 0 || !online;
-  const ex = result?.extracted;
-  const action = ex?.action || "جارٍ";
-  const actionMeta = ACTION_LABEL[action] || ACTION_LABEL["جارٍ"];
+  const liveText = (speech.finalText + " " + speech.interim).trim();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, minHeight: "100%" }}>
@@ -241,7 +294,7 @@ export default function LiveSession() {
         </span>
       </header>
 
-      {/* بانر الجلسات المعلّقة — يظهر فقط عند وجود معلّق أو انقطاع الاتصال */}
+      {/* بانر التسجيلات المعلّقة (أوفلاين حقيقي) أو انقطاع الاتصال */}
       {showBanner && (
         <div className="glass glass-2" style={{ padding: "13px 15px", display: "flex", alignItems: "center", gap: 12, borderRadius: 18 }}>
           <div className="kpi-ico" style={{ width: 36, height: 36, color: pending ? "var(--brown-700)" : "var(--ink-faint)" }}>
@@ -249,7 +302,7 @@ export default function LiveSession() {
           </div>
           <div style={{ flex: 1, fontSize: 13.5 }}>
             {pending > 0 ? (
-              <>لديك <b className="num">{formatNumber(pending)}</b> جلسة معلّقة بانتظار التحليل</>
+              <>لديك <b className="num">{formatNumber(pending)}</b> تسجيل معلّق بانتظار التحليل</>
             ) : (
               <span style={{ color: "var(--ink-soft)" }}>لا يوجد اتصال — سيُحفظ تسجيلك محلياً</span>
             )}
@@ -265,30 +318,32 @@ export default function LiveSession() {
       {error && <div className="banner banner-error">{error}</div>}
       {notice && <div className="banner banner-ok">{notice}</div>}
 
-      {/* منطقة الميكروفون — العنصر الأبرز */}
-      {phase !== "result" && (
-        <div className="glass glass-2 panel" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 18, padding: "40px 20px", textAlign: "center" }}>
-          <div className={"waveform" + (recording ? "" : " idle")} aria-hidden="true">
+      {/* منطقة الميكروفون */}
+      {phase !== "review" && (
+        <div className="glass glass-2 panel" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, padding: "32px 20px", textAlign: "center" }}>
+          <div className={"waveform" + (recording && !paused ? "" : " idle")} aria-hidden="true">
             {[...Array(15)].map((_, i) => <span key={i} style={{ animationDelay: i * 0.07 + "s" }} />)}
           </div>
 
           <button
             className={"rec-btn" + (recording ? " recording" : "")}
-            style={{ width: 132, height: 132 }}
+            style={{ width: 128, height: 128 }}
             onClick={handleMicPress}
             disabled={phase === "processing"}
             title={recording ? "إيقاف" : "ابدأ المزاد"}
           >
-            {phase === "processing" ? <Spinner style={{ width: 40, height: 40 }} /> : <Icon name={recording ? "stop" : "mic"} size={52} />}
+            {phase === "processing" ? <Spinner style={{ width: 40, height: 40 }} /> : <Icon name={recording ? "stop" : "mic"} size={50} />}
           </button>
 
           <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: "var(--brown-800)" }}>
+            <div className="num" style={{ fontSize: 22, fontWeight: 700, color: paused ? "var(--ink-soft)" : "var(--brown-800)" }}>
               {phase === "processing" ? "جارٍ التحليل…" : recording ? formatDuration(seconds) : "ابدأ المزاد"}
             </div>
             <div style={{ fontSize: 13, color: "var(--ink-soft)", marginTop: 4 }}>
               {phase === "processing"
                 ? "تحويل الصوت واستخراج البيانات"
+                : paused
+                ? "التسجيل متوقّف مؤقتاً"
                 : recording
                 ? "اضغط لإيقاف التسجيل وعرض التحليل"
                 : online
@@ -298,59 +353,107 @@ export default function LiveSession() {
             {recError && <div style={{ fontSize: 12, color: "#7e2a1c", marginTop: 6 }}>{recError}</div>}
           </div>
 
-          {/* تجربة تسجيل معلّق (أوفلاين) كبروتوتايب — يضيف عنصراً للطابور لعرضه */}
-          {phase === "idle" && !recording && (
+          {/* إيقاف مؤقت / استئناف أثناء التسجيل */}
+          {recording && (
             <button
               type="button"
               className="btn btn-ghost"
-              style={{ padding: "8px 14px", fontSize: 12.5 }}
-              onClick={async () => { await seedDemoPending(true); await refreshPending(); setNotice("أُضيف تسجيل معلّق تجريبي — اضغط «تحليل» في الأعلى لعرض نتيجته."); }}
+              style={{ padding: "9px 18px", fontSize: 13.5 }}
+              onClick={paused ? resume : pause}
             >
-              <Icon name="box" size={15} /> تجربة تسجيل معلّق (أوفلاين)
+              <Icon name={paused ? "mic" : "stop"} size={15} /> {paused ? "استئناف" : "إيقاف مؤقت"}
+            </button>
+          )}
+
+          {/* التفريغ المباشر أثناء التسجيل */}
+          {recording && speech.supported && (
+            <div className="glass-inset" style={{ width: "100%", padding: "12px 14px", minHeight: 54, textAlign: "start" }}>
+              <div style={{ fontSize: 11.5, color: "var(--ink-faint)", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 }}>
+                <span className="pulse" style={{ width: 6, height: 6 }} /> التفريغ المباشر
+              </div>
+              <div style={{ fontSize: 14, lineHeight: 1.8, color: "var(--brown-800)" }}>
+                {speech.finalText}
+                {speech.interim && <span style={{ color: "var(--ink-faint)" }}> {speech.interim}</span>}
+                {!liveText && <span style={{ color: "var(--ink-faint)" }}>… أستمع</span>}
+              </div>
+            </div>
+          )}
+
+          {/* إنهاء الجلسة الحالية (إن كانت مفتوحة ولسنا نسجّل) */}
+          {!recording && phase === "idle" && sessionId && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ padding: "7px 14px", fontSize: 12.5 }}
+              onClick={async () => {
+                try { await sessionsApi.end(sessionId); setSessionId(null); setNotice("تم إنهاء الجلسة الحالية ✓"); }
+                catch (err) { setError(apiError(err, "تعذّر إنهاء الجلسة")); }
+              }}
+            >
+              <Icon name="check" size={14} /> إنهاء الجلسة الحالية
             </button>
           )}
         </div>
       )}
 
-      {/* نتيجة التحليل + اعتماد */}
-      {phase === "result" && ex && (
+      {/* نموذج المراجعة القابل للتعديل — لا حفظ إلا بعد مراجعة الدلّال */}
+      {phase === "review" && form && (
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
           <div className="glass glass-2 panel">
             <div className="panel-head">
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <Icon name="spark" size={18} style={{ color: "var(--green-700)" }} />
-                <h3 style={{ fontSize: 16, color: "var(--brown-800)" }}>نتيجة التحليل</h3>
+                <h3 style={{ fontSize: 16, color: "var(--brown-800)" }}>راجِع وعدّل قبل الحفظ</h3>
               </div>
-              <span className={"chip " + actionMeta.cls}>{actionMeta.txt}</span>
+              <span className="chip chip-muted" style={{ fontSize: 11.5 }}>تحرير</span>
             </div>
 
-            <div className="glass-inset" style={{ padding: "16px 18px", marginBottom: 12, textAlign: "center" }}>
-              <div style={{ fontSize: 12.5, color: "var(--ink-soft)" }}>السعر</div>
-              <div className="kv-val" style={{ fontSize: 36, fontWeight: 300 }}>{ex.price != null ? formatCurrency(ex.price) : "—"}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <ReviewField label="نوع التمر" value={form.product_name} onChange={(v) => setField("product_name", v)} span2 />
+              <ReviewField label="الكمية" value={form.quantity} onChange={(v) => setField("quantity", v)} type="number" />
+              <ReviewField label="الوحدة" value={form.unit} onChange={(v) => setField("unit", v)} placeholder="كرتون / صندوق / كيلو" />
+              <ReviewField label="سعر الافتتاح" value={form.opening_price} onChange={(v) => setField("opening_price", v)} type="number" />
+              <ReviewField label="السعر النهائي" value={form.final_price} onChange={(v) => setField("final_price", v)} type="number" />
+              <ReviewField label="اسم المشتري" value={form.buyer_name} onChange={(v) => setField("buyer_name", v)} />
+              <ReviewField label="رقم المشتري" value={form.buyer_number} onChange={(v) => setField("buyer_number", v)} placeholder="مثل: ٥" />
+              <ReviewField label="البائع" value={form.seller_name} onChange={(v) => setField("seller_name", v)} />
+              <ReviewField label="الفائز" value={form.winner} onChange={(v) => setField("winner", v)} />
+              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>الحالة</span>
+                <select className="rv-input" value={form.status} onChange={(e) => setField("status", e.target.value)}>
+                  <option value="active">جارٍ/مفتوح</option>
+                  <option value="closed">تم البيع</option>
+                </select>
+              </div>
+              <ReviewField label="العملة" value={form.currency} onChange={(v) => setField("currency", v)} />
+              <ReviewField label="ملاحظات" value={form.notes} onChange={(v) => setField("notes", v)} span2 />
             </div>
 
-            {[
-              ["نوع التمر", "box", ex.product || "—"],
-              ["الوحدة", "scale", ex.unit || "—"],
-              ["ثقة الاستخراج", "check", ex.confidence ? CONFIDENCE[ex.confidence]?.label || ex.confidence : "—"],
-            ].map(([label, icon, val]) => (
-              <div className="kv" key={label}>
-                <span className="kv-label"><Icon name={icon} size={16} style={{ color: "var(--ink-faint)" }} /> {label}</span>
-                <span style={{ fontWeight: 600, fontSize: 15, color: "var(--brown-800)" }}>{val}</span>
+            {/* قراءة فقط: تسلسل المزايدات الذي استخرجه الذكاء الاصطناعي */}
+            {Array.isArray(form.bids) && form.bids.length > 0 && (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 6 }}>تسلسل المزايدات (من التحليل)</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                  {form.bids.map((b, i) => (
+                    <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span className="chip chip-green" style={{ padding: "3px 10px", fontSize: 12 }}>
+                        {formatNumber(b.price)}{b.bidder ? ` · ${b.bidder}` : ""}
+                      </span>
+                      {i < form.bids.length - 1 && <span style={{ color: "var(--ink-faint)" }}>←</span>}
+                    </span>
+                  ))}
+                </div>
               </div>
-            ))}
+            )}
 
-            {/* التحليل الغني (بائع/مشتري/فائز، افتتاح→نهائي، تسلسل المزايدات، ملاحظات) */}
-            <RichAnalysis a={result?.analysis} />
-
-            {result?.transcription && (
+            {form.transcript && (
               <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.8, color: "var(--ink-soft)", background: "rgba(255,252,246,0.4)", borderRadius: 12, padding: "10px 14px" }}>
-                «{result.transcription}»
+                «{form.transcript}»
               </div>
             )}
           </div>
 
-          {/* أثر قرارات الوكيل (إن وُجد) */}
+          {/* مسار التحليل (إن وُجد) */}
           {Array.isArray(result?.trace) && result.trace.length > 0 && (
             <div className="glass glass-2 panel">
               <div className="panel-head"><h3 style={{ fontSize: 14, color: "var(--brown-800)" }}>مسار التحليل</h3></div>
@@ -372,11 +475,11 @@ export default function LiveSession() {
           )}
 
           <div style={{ display: "flex", gap: 10 }}>
-            <button className="btn btn-ghost" style={{ flex: 1, padding: 14 }} onClick={() => { setResult(null); setPhase("idle"); }}>
+            <button className="btn btn-ghost" style={{ flex: 1, padding: 14 }} onClick={discardReview} disabled={saving}>
               <Icon name="mic" size={17} /> تسجيل آخر
             </button>
-            <button className="btn btn-green" style={{ flex: 1, padding: 14 }} onClick={confirmResult}>
-              <Icon name="check" size={17} /> اعتماد وإنهاء
+            <button className="btn btn-green" style={{ flex: 1, padding: 14 }} onClick={saveAuction} disabled={saving}>
+              {saving ? <><Spinner /> جارٍ الحفظ…</> : <><Icon name="check" size={17} /> اعتماد وحفظ</>}
             </button>
           </div>
         </div>
@@ -385,86 +488,19 @@ export default function LiveSession() {
   );
 }
 
-// حالة التحليل (من Gemini) → تسمية عربية
-const ANALYSIS_STATUS_AR = {
-  open: "افتتاح",
-  in_progress: "مزايدة جارية",
-  sold: "تم البيع",
-  unsold: "بلا بيع",
-  unknown: "غير محدد",
-};
-
-/* عرض الحقول الغنية القادمة من تحليل Gemini (حقل result.analysis). */
-function RichAnalysis({ a }) {
-  if (!a) return null;
-
-  const people = [
-    ["البائع", a.seller_name],
-    ["المشتري", a.buyer_name],
-    ["الفائز", a.winner],
-  ].filter(([, v]) => v);
-
-  const hasPrices = a.opening_price != null || a.final_price != null;
-  const bids = Array.isArray(a.bids) ? a.bids : [];
-  const hasContent = people.length || hasPrices || bids.length || a.notes;
-  if (!hasContent) return null;
-
+/* حقل إدخال قابل للتعديل في نموذج المراجعة. */
+function ReviewField({ label, value, onChange, type = "text", placeholder, span2 }) {
   return (
-    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
-      {/* الأشخاص */}
-      {people.length > 0 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {people.map(([label, v]) => (
-            <span key={label} className="chip chip-muted" style={{ padding: "4px 11px", fontSize: 12.5 }}>
-              {label}: <b style={{ color: "var(--brown-800)", marginInlineStart: 4 }}>{v}</b>
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* الافتتاح → النهائي */}
-      {hasPrices && (
-        <div className="glass-inset" style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-around", gap: 8 }}>
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>الافتتاح</div>
-            <div className="num" style={{ fontSize: 18, color: "var(--brown-800)" }}>{a.opening_price != null ? formatCurrency(a.opening_price) : "—"}</div>
-          </div>
-          <Icon name="arrowL" size={18} style={{ color: "var(--ink-faint)" }} />
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>النهائي</div>
-            <div className="num" style={{ fontSize: 18, color: "var(--green-800)", fontWeight: 600 }}>{a.final_price != null ? formatCurrency(a.final_price) : "—"}</div>
-          </div>
-          {a.status && (
-            <span className={"chip " + (a.status === "sold" ? "chip-green" : "chip-muted")} style={{ padding: "3px 10px", fontSize: 11.5 }}>
-              {ANALYSIS_STATUS_AR[a.status] || a.status}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* تسلسل المزايدات */}
-      {bids.length > 0 && (
-        <div>
-          <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 6 }}>تسلسل المزايدات</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {bids.map((b, i) => (
-              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <span className="chip chip-green" style={{ padding: "3px 10px", fontSize: 12 }}>
-                  {formatNumber(b.price)}{b.bidder ? ` · ${b.bidder}` : ""}
-                </span>
-                {i < bids.length - 1 && <span style={{ color: "var(--ink-faint)" }}>←</span>}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ملاحظات */}
-      {a.notes && (
-        <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.7 }}>
-          <b style={{ color: "var(--brown-800)" }}>ملاحظة:</b> {a.notes}
-        </div>
-      )}
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, gridColumn: span2 ? "1 / -1" : "auto" }}>
+      <span style={{ fontSize: 12, color: "var(--ink-soft)" }}>{label}</span>
+      <input
+        className="rv-input"
+        type={type}
+        inputMode={type === "number" ? "decimal" : undefined}
+        value={value ?? ""}
+        placeholder={placeholder}
+        onChange={(e) => onChange(e.target.value)}
+      />
     </div>
   );
 }

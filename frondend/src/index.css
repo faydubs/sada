@@ -726,3 +726,18 @@ a { color: inherit; }
   .role-card { padding: 26px 20px; }
   .splash-title { font-size: 36px; }
 }
+
+/* حقول نموذج المراجعة القابل للتعديل (شاشة "راجِع وعدّل قبل الحفظ") */
+.rv-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(108, 78, 54, 0.18);
+  background: rgba(255, 252, 246, 0.6);
+  color: var(--brown-800);
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.rv-input:focus { border-color: var(--green-700); }

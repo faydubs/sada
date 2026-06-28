@@ -61,6 +61,7 @@ def _analysis_to_extracted(a: AuctionAnalysis) -> dict:
         # حقول غنية إضافية (الواجهة تتجاهل ما لا تعرفه، وتفيد التخزين/العرض لاحقاً)
         "seller": a.seller_name,
         "buyer": a.buyer_name,
+        "buyer_number": a.buyer_number,
         "winner": a.winner,
         "currency": a.currency,
         "bids_sequence": bids_prices,

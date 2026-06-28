@@ -103,6 +103,38 @@ class AuctionCreate(BaseModel):
         return v
 
 
+class AuctionReviewCreate(BaseModel):
+    """
+    إنشاء مزاد من بيانات راجعها الدلّال يدوياً بعد التحليل (شاشة المراجعة).
+    لا تُحفظ نتائج الـ AI تلقائياً — تُنشأ عبر هذا المسار بعد التعديل والاعتماد.
+    """
+    session_id: int
+    product_name: str
+    quantity: Decimal = Decimal(1)
+    unit: str = "غير محدد"
+    opening_price: Optional[Decimal] = None
+    final_price: Optional[Decimal] = None
+    buyer_name: Optional[str] = None
+    buyer_number: Optional[str] = None
+    seller_name: Optional[str] = None
+    winner: Optional[str] = None
+    currency: Optional[str] = "SAR"
+    bids: Optional[list] = None
+    notes: Optional[str] = None
+    transcript: Optional[str] = None
+    confidence: Optional[Decimal] = None
+    analysis_status: Optional[str] = None
+    model_used: Optional[str] = None
+    status: AuctionStatus = AuctionStatus.active
+
+    @field_validator("product_name")
+    @classmethod
+    def product_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("اسم المنتج لا يكون فارغاً")
+        return v.strip()
+
+
 class AuctionUpdate(BaseModel):
     """لتحديث/تصحيح المزاد وإغلاقه يدوياً من شاشة الدلّال."""
     product_name: Optional[str] = None
@@ -110,6 +142,7 @@ class AuctionUpdate(BaseModel):
     unit: Optional[str] = None
     final_price: Optional[Decimal] = None
     buyer_name: Optional[str] = None
+    buyer_number: Optional[str] = None
     status: Optional[AuctionStatus] = None
     closed_at: Optional[datetime] = None
 
@@ -122,6 +155,7 @@ class AuctionResponse(BaseModel):
     unit: str
     final_price: Optional[Decimal]
     buyer_name: Optional[str]
+    buyer_number: Optional[str] = None
     started_at: datetime
     closed_at: Optional[datetime]
     status: AuctionStatus

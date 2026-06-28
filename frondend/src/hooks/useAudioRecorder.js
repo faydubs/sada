@@ -25,21 +25,44 @@ function extFor(mime) {
 }
 
 /**
- * هوك تسجيل صوتي من الميكروفون.
- * يعيد دوال البدء/الإيقاف، وحالة التسجيل، ومدة العداد بالثواني.
- * عند الإيقاف يستدعي onStop(file) بملف جاهز للرفع.
+ * هوك تسجيل صوتي من الميكروفون مع عدّاد دقيق ودعم الإيقاف المؤقت/الاستئناف.
+ *
+ * العدّاد يُحسب من طوابع زمنية حقيقية (performance.now) لا من عدّ نبضات
+ * setInterval — فلا ينحرف ولا يتأخّر عند تجميد التبويب، ويطابق مدة الصوت
+ * الفعلية (نستخدم MediaRecorder.pause الذي يستبعد زمن الإيقاف من التسجيل).
+ *
+ * يعيد: { recording, paused, seconds, error, start, pause, resume, stop }
+ * عند الإيقاف النهائي يستدعي onStop(file) بملف جاهز للرفع.
  */
 export function useAudioRecorder(onStop) {
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const [error, setError] = useState(null);
 
   const recorderRef = useRef(null);
   const chunksRef = useRef([]);
   const streamRef = useRef(null);
-  const timerRef = useRef(null);
   const onStopRef = useRef(onStop);
   onStopRef.current = onStop;
+
+  // ── حساب الوقت: زمن متراكم قبل آخر استئناف + الزمن منذ آخر استئناف ──
+  const accumulatedMsRef = useRef(0); // ملّي ثانية مكتملة قبل الجزء الجاري
+  const segmentStartRef = useRef(0);  // طابع بدء الجزء الجاري (performance.now)
+  const tickRef = useRef(null);
+
+  const _elapsedMs = useCallback((isPaused) => {
+    const live = isPaused ? 0 : performance.now() - segmentStartRef.current;
+    return accumulatedMsRef.current + live;
+  }, []);
+
+  const _startTicking = useCallback(() => {
+    clearInterval(tickRef.current);
+    // تحديث كل 200ms للسلاسة، لكن القيمة محسوبة من الطوابع الزمنية (دقيقة)
+    tickRef.current = setInterval(() => {
+      setSeconds(Math.floor(_elapsedMs(false) / 1000));
+    }, 200);
+  }, [_elapsedMs]);
 
   const start = useCallback(async () => {
     setError(null);
@@ -57,7 +80,6 @@ export function useAudioRecorder(onStop) {
         const type = recorder.mimeType || mimeType || "audio/webm";
         const blob = new Blob(chunksRef.current, { type });
         const file = new File([blob], `recording.${extFor(type)}`, { type });
-        // أغلق المسارات لتحرير الميكروفون
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
         onStopRef.current?.(file);
@@ -65,9 +87,13 @@ export function useAudioRecorder(onStop) {
 
       recorder.start();
       recorderRef.current = recorder;
-      setRecording(true);
+
+      accumulatedMsRef.current = 0;
+      segmentStartRef.current = performance.now();
       setSeconds(0);
-      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+      setRecording(true);
+      setPaused(false);
+      _startTicking();
     } catch (e) {
       setError(
         e?.name === "NotAllowedError"
@@ -75,15 +101,39 @@ export function useAudioRecorder(onStop) {
           : "تعذّر الوصول إلى الميكروفون."
       );
     }
+  }, [_startTicking]);
+
+  const pause = useCallback(() => {
+    const rec = recorderRef.current;
+    if (!rec || rec.state !== "recording") return;
+    rec.pause();
+    // ثبّت الزمن المتراكم وأوقف عدّ الجزء الجاري
+    accumulatedMsRef.current += performance.now() - segmentStartRef.current;
+    clearInterval(tickRef.current);
+    setSeconds(Math.floor(accumulatedMsRef.current / 1000));
+    setPaused(true);
   }, []);
 
+  const resume = useCallback(() => {
+    const rec = recorderRef.current;
+    if (!rec || rec.state !== "paused") return;
+    rec.resume();
+    segmentStartRef.current = performance.now();
+    setPaused(false);
+    _startTicking();
+  }, [_startTicking]);
+
   const stop = useCallback(() => {
-    clearInterval(timerRef.current);
+    clearInterval(tickRef.current);
+    // ثبّت العدّاد النهائي على القيمة الفعلية لحظة الإيقاف
+    const isPaused = recorderRef.current?.state === "paused";
+    setSeconds(Math.round(_elapsedMs(isPaused) / 1000));
     setRecording(false);
+    setPaused(false);
     if (recorderRef.current && recorderRef.current.state !== "inactive") {
       recorderRef.current.stop();
     }
-  }, []);
+  }, [_elapsedMs]);
 
-  return { recording, seconds, error, start, stop };
+  return { recording, paused, seconds, error, start, pause, resume, stop };
 }

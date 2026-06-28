@@ -108,6 +108,7 @@ class Auction(Base):
     unit         = Column(String(50), nullable=False)
     final_price  = Column(Numeric(14, 3), nullable=True)
     buyer_name   = Column(String(200), nullable=True)
+    buyer_number = Column(String(50), nullable=True)   # رقم المشتري/المضرب — قابل للتحرير
     started_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     closed_at    = Column(DateTime(timezone=True), nullable=True)
     status       = Column(Enum(AuctionStatus, name="auction_status"), nullable=False, default=AuctionStatus.pending)
