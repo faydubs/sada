@@ -340,6 +340,9 @@ export default function LiveSession() {
               </div>
             ))}
 
+            {/* التحليل الغني (بائع/مشتري/فائز، افتتاح→نهائي، تسلسل المزايدات، ملاحظات) */}
+            <RichAnalysis a={result?.analysis} />
+
             {result?.transcription && (
               <div style={{ marginTop: 12, fontSize: 13, lineHeight: 1.8, color: "var(--ink-soft)", background: "rgba(255,252,246,0.4)", borderRadius: 12, padding: "10px 14px" }}>
                 «{result.transcription}»
@@ -376,6 +379,90 @@ export default function LiveSession() {
               <Icon name="check" size={17} /> اعتماد وإنهاء
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// حالة التحليل (من Gemini) → تسمية عربية
+const ANALYSIS_STATUS_AR = {
+  open: "افتتاح",
+  in_progress: "مزايدة جارية",
+  sold: "تم البيع",
+  unsold: "بلا بيع",
+  unknown: "غير محدد",
+};
+
+/* عرض الحقول الغنية القادمة من تحليل Gemini (حقل result.analysis). */
+function RichAnalysis({ a }) {
+  if (!a) return null;
+
+  const people = [
+    ["البائع", a.seller_name],
+    ["المشتري", a.buyer_name],
+    ["الفائز", a.winner],
+  ].filter(([, v]) => v);
+
+  const hasPrices = a.opening_price != null || a.final_price != null;
+  const bids = Array.isArray(a.bids) ? a.bids : [];
+  const hasContent = people.length || hasPrices || bids.length || a.notes;
+  if (!hasContent) return null;
+
+  return (
+    <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* الأشخاص */}
+      {people.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {people.map(([label, v]) => (
+            <span key={label} className="chip chip-muted" style={{ padding: "4px 11px", fontSize: 12.5 }}>
+              {label}: <b style={{ color: "var(--brown-800)", marginInlineStart: 4 }}>{v}</b>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* الافتتاح → النهائي */}
+      {hasPrices && (
+        <div className="glass-inset" style={{ padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-around", gap: 8 }}>
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>الافتتاح</div>
+            <div className="num" style={{ fontSize: 18, color: "var(--brown-800)" }}>{a.opening_price != null ? formatCurrency(a.opening_price) : "—"}</div>
+          </div>
+          <Icon name="arrowL" size={18} style={{ color: "var(--ink-faint)" }} />
+          <div style={{ textAlign: "center" }}>
+            <div style={{ fontSize: 11.5, color: "var(--ink-soft)" }}>النهائي</div>
+            <div className="num" style={{ fontSize: 18, color: "var(--green-800)", fontWeight: 600 }}>{a.final_price != null ? formatCurrency(a.final_price) : "—"}</div>
+          </div>
+          {a.status && (
+            <span className={"chip " + (a.status === "sold" ? "chip-green" : "chip-muted")} style={{ padding: "3px 10px", fontSize: 11.5 }}>
+              {ANALYSIS_STATUS_AR[a.status] || a.status}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* تسلسل المزايدات */}
+      {bids.length > 0 && (
+        <div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 6 }}>تسلسل المزايدات</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            {bids.map((b, i) => (
+              <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span className="chip chip-green" style={{ padding: "3px 10px", fontSize: 12 }}>
+                  {formatNumber(b.price)}{b.bidder ? ` · ${b.bidder}` : ""}
+                </span>
+                {i < bids.length - 1 && <span style={{ color: "var(--ink-faint)" }}>←</span>}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ملاحظات */}
+      {a.notes && (
+        <div style={{ fontSize: 12.5, color: "var(--ink-soft)", lineHeight: 1.7 }}>
+          <b style={{ color: "var(--brown-800)" }}>ملاحظة:</b> {a.notes}
         </div>
       )}
     </div>

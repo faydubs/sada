@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
 # استيراد Base من database – لا نعيد تعريفه هنا
@@ -110,6 +111,18 @@ class Auction(Base):
     started_at   = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     closed_at    = Column(DateTime(timezone=True), nullable=True)
     status       = Column(Enum(AuctionStatus, name="auction_status"), nullable=False, default=AuctionStatus.pending)
+
+    # ── حقول التحليل الغني (تُملأ من AuctionAnalysis — كلها nullable/غير كاسرة) ──
+    seller_name     = Column(String(200), nullable=True)   # البائع/صاحب البضاعة
+    winner          = Column(String(200), nullable=True)   # الفائز بالمزاد عند البيع
+    opening_price   = Column(Numeric(14, 3), nullable=True) # سعر الافتتاح
+    currency        = Column(String(8), nullable=True, default="SAR")
+    bids            = Column(JSONB, nullable=True)          # [{price, bidder}] بالترتيب الزمني
+    confidence      = Column(Numeric(4, 3), nullable=True)  # ثقة التحليل 0..1
+    notes           = Column(Text, nullable=True)           # ملاحظات/سياق
+    transcript      = Column(Text, nullable=True)           # التفريغ النصي للمقطع
+    analysis_status = Column(String(20), nullable=True)     # حالة التحليل (open/sold/...)
+    model_used      = Column(String(50), nullable=True)     # الموديل/المحلِّل المُنتِج
 
     session = relationship("Session", back_populates="auctions")
     audio_chunks = relationship(

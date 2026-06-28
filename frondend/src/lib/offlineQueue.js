@@ -66,12 +66,32 @@ export const DEMO_RESULT = {
     note: "الصوت يطابق بصمة الدلّال المسجّل (وضع العرض).",
   },
   trace: [
-    { skill: "transcribe_audio", status: "ok" },
-    { skill: "extract_auction_data", status: "ok" },
-    { skill: "classify_auction_state", status: "ok", action: "إغلاق" },
-    { step: "decision_route", route_chosen: "offline_demo", status: "ok" },
+    { skill: "gemini_audio", status: "ok", confidence: 0.95 },
+    { step: "decision_route", route_chosen: "gemini_audio", status: "ok" },
     { skill: "verify_voiceprint", status: "ok", is_match: true, best_score: 0.93 },
   ],
+  // المخطط الغني (نفس شكل حقل analysis من /process-audio)
+  analysis: {
+    product_type: "سكري",
+    seller_name: "أبو سلطان",
+    buyer_name: "أبو فهد",
+    winner: "أبو فهد",
+    opening_price: 120,
+    final_price: 145,
+    bids: [
+      { price: 120, bidder: null },
+      { price: 130, bidder: null },
+      { price: 140, bidder: null },
+      { price: 145, bidder: "أبو فهد" },
+    ],
+    currency: "SAR",
+    status: "sold",
+    quantity: 1,
+    unit: "كرتون",
+    confidence: 0.95,
+    notes: "تمر سكري فاخر من مزارع القصيم.",
+    model_used: "gemini-2.5-flash",
+  },
   auction_created: null,
 };
 

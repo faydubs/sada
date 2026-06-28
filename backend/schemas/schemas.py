@@ -126,6 +126,18 @@ class AuctionResponse(BaseModel):
     closed_at: Optional[datetime]
     status: AuctionStatus
 
+    # ── حقول التحليل الغني (اختيارية — تظهر عند توفّرها) ──
+    seller_name: Optional[str] = None
+    winner: Optional[str] = None
+    opening_price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    bids: Optional[list] = None
+    confidence: Optional[Decimal] = None
+    notes: Optional[str] = None
+    transcript: Optional[str] = None
+    analysis_status: Optional[str] = None
+    model_used: Optional[str] = None
+
     model_config = {"from_attributes": True}
 
 

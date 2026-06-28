@@ -2,10 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from core.config import settings
 from core.database import Base, engine
+from core.db_migrate import run_lightweight_migrations
 from models import models
 from api import auth, sessions, auctions, analytics, dashboard, reports, ws, insights
 
 Base.metadata.create_all(bind=engine)
+# أضِف أعمدة التحليل الغني للجدول القائم (idempotent — create_all لا يعدّل الأعمدة).
+run_lightweight_migrations(engine)
 
 app = FastAPI(title="صدى التمر API", version="1.0")
 

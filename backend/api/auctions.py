@@ -101,20 +101,38 @@ async def process_audio(
                 "trace": trace,
             })
 
-        # ── أنشئ مزاداً تلقائياً فقط عند ثقة كافية وبيانات أساسية مكتملة
+        # ── أنشئ مزاداً تلقائياً عند ثقة كافية وبيانات أساسية مكتملة.
+        #    يشمل الآن المزادات المُغلقة (sold) لا الافتتاح فقط — لأن Gemini
+        #    يعطي الصورة الكاملة (بائع/مشتري/مزايدات/سعر نهائي) من مقطع واحد.
+        ana = result.get("analysis") or {}
+        ana_status = ana.get("status")
+        price = ana.get("final_price") if ana.get("final_price") is not None else ana.get("opening_price")
         if (
-            extracted["action"] == "افتتاح"
-            and extracted["product"]
-            and extracted["price"] is not None
+            extracted["product"]
+            and price is not None
             and extracted["confidence"] in ("medium", "high")
+            and ana_status in ("open", "sold")
         ):
+            is_sold = ana_status == "sold"
             auction = Auction(
                 session_id=session_id,
                 product_name=extracted["product"],
-                quantity=extracted.get("quantity") or 1,  # قيمة افتراضية مبدئية — تُحدَّث لاحقاً يدوياً أو من بيانات أدق
-                unit=extracted["unit"] or "غير محدد",
-                final_price=extracted["price"],
-                status=AuctionStatus.active,
+                quantity=ana.get("quantity") or 1,  # قيمة مبدئية — تُحدَّث يدوياً عند الحاجة
+                unit=ana.get("unit") or "غير محدد",
+                opening_price=ana.get("opening_price"),
+                final_price=ana.get("final_price") if is_sold else ana.get("opening_price"),
+                buyer_name=ana.get("buyer_name") or ana.get("winner"),
+                seller_name=ana.get("seller_name"),
+                winner=ana.get("winner"),
+                currency=ana.get("currency") or "SAR",
+                bids=ana.get("bids") or [],
+                confidence=ana.get("confidence"),
+                notes=ana.get("notes"),
+                transcript=ana.get("transcript"),
+                analysis_status=ana_status,
+                model_used=ana.get("model_used"),
+                status=AuctionStatus.closed if is_sold else AuctionStatus.active,
+                closed_at=datetime.now(timezone.utc) if is_sold else None,
             )
             db.add(auction)
             db.commit()
